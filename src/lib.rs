@@ -1,6 +1,9 @@
-use std::{cmp::Ordering, collections::HashMap};
+pub mod chain;
+
+use std::{cmp::Ordering, collections::HashMap, marker::PhantomData};
 
 use derive_more::{Deref, DerefMut};
+use derive_where::derive_where;
 use serde::{Deserialize, Serialize};
 
 pub trait ClockClientContext {
@@ -121,36 +124,49 @@ impl PartialEq for OrdinaryClock {
 }
 
 #[derive(Debug)]
-pub struct OrdinaryClientContext;
+#[derive_where(Default)]
+pub struct OrdinaryClientContext<O>(PhantomData<O>);
 
-impl ClockClientContext for OrdinaryClientContext {
+impl<O> OrdinaryClientContext<O> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<O> ClockClientContext for OrdinaryClientContext<O> {
     type Clock = OrdinaryClock;
-    type Output = ();
+    type Output = O;
 
-    fn verify(&self, _: &Self::Clock, &(): &Self::Output) -> anyhow::Result<()> {
+    fn verify(&self, _: &Self::Clock, &_: &Self::Output) -> anyhow::Result<()> {
         Ok(())
     }
 }
 
 #[derive(Debug)]
-pub struct OrdinaryContext(pub NodeId);
+pub struct OrdinaryContext<I, O>(NodeId, PhantomData<(I, O)>);
 
-impl ClockClientContext for OrdinaryContext {
+impl<I, O> OrdinaryContext<I, O> {
+    pub fn new(id: NodeId) -> Self {
+        Self(id, Default::default())
+    }
+}
+
+impl<I, O> ClockClientContext for OrdinaryContext<I, O> {
     type Clock = OrdinaryClock;
-    type Output = ();
+    type Output = O;
 
-    fn verify(&self, _: &Self::Clock, &(): &Self::Output) -> anyhow::Result<()> {
+    fn verify(&self, _: &Self::Clock, &_: &Self::Output) -> anyhow::Result<()> {
         Ok(())
     }
 }
 
-impl ClockContext for OrdinaryContext {
-    type Input = ();
+impl<I, O> ClockContext for OrdinaryContext<I, O> {
+    type Input = I;
 
     fn prove(
         &self,
         predecessors: &[(Self::Clock, Self::Input)],
-        (): &Self::Output,
+        _: &Self::Output,
     ) -> anyhow::Result<Self::Clock> {
         Ok(OrdinaryClock::new(
             predecessors.iter().map(|(clock, _)| clock),
