@@ -7,7 +7,7 @@ use axum::{
     Json, Router,
 };
 use bytes::Bytes;
-use pohb::{chain, OrdinaryClientContext, OrdinaryClock, TaskResult, TaskStage, Workflow};
+use pohb::{OrdinaryClientContext, OrdinaryClock, TaskResult, TaskStage, Workflow};
 use reqwest::StatusCode;
 use tokio::{fs, net::TcpListener, sync::watch::Sender};
 use tokio_stream::{wrappers::WatchStream, StreamExt as _};
@@ -71,7 +71,7 @@ async fn chain_subscribe(shared: State<Shared>) -> impl IntoResponse {
 }
 
 async fn chain_propose(shared: State<Shared>, Json(message): Json<ChainMessage>) -> Response {
-    if let Err(err) = chain::verify(&message, &shared.task, &*shared.context) {
+    if let Err(err) = message.verify(&shared.task, &*shared.context) {
         return (StatusCode::FORBIDDEN, err.to_string()).into_response();
     }
     let _ = shared.chain.send(Some(message));

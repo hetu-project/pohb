@@ -1,5 +1,3 @@
-pub mod chain;
-
 use std::{cmp::Ordering, collections::HashMap, marker::PhantomData};
 
 use derive_more::{Deref, DerefMut};
@@ -62,9 +60,12 @@ pub trait ClockContext: ClockClientContext {
     // context and should be passed in during initializing the context
     fn prove(
         &self,
-        predecessors: &[(Self::Clock, Self::Input)],
+        predecessors: &[(&Self::Clock, &Self::Input)],
         output: &Self::Output,
     ) -> anyhow::Result<Self::Clock>;
+    // TODO make this into an asynchronous interface, as the clock proving may not be instant
+    // current stabilized async trait method is crappy, i would prefer to add a closure parameter
+    // and pass a oneshot sender with it
 }
 
 // id of the computation nodes
@@ -165,11 +166,11 @@ impl<I, O> ClockContext for OrdinaryContext<I, O> {
 
     fn prove(
         &self,
-        predecessors: &[(Self::Clock, Self::Input)],
+        predecessors: &[(&Self::Clock, &Self::Input)],
         _: &Self::Output,
     ) -> anyhow::Result<Self::Clock> {
         Ok(OrdinaryClock::new(
-            predecessors.iter().map(|(clock, _)| clock),
+            predecessors.iter().map(|(clock, _)| *clock),
             self.0,
         ))
     }
@@ -181,15 +182,88 @@ pub struct Workflow {
     pub stages: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StageSource {
+    Start,
+    Name(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskStage<C, I> {
-    pub name: String, // of stage
-    pub input: I,     // of stage
+    pub id: TaskId,
+    pub source: StageSource,
+    pub input: I,
     pub clocks: HashMap<String, C>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskResult<C, O> {
+    pub id: TaskId,
     pub output: O,
     pub clocks: HashMap<String, C>,
+}
+
+fn verify<C: PartialOrd, O>(
+    clocks: &HashMap<String, C>,
+    output_stage: &str,
+    output: &O,
+    task: &Workflow,
+    context: &impl ClockClientContext<Clock = C, Output = O>,
+) -> anyhow::Result<()> {
+    for window in task.stages.windows(2) {
+        let [stage, next_stage] = window else {
+            unreachable!()
+        };
+        let clock = clocks
+            .get(stage)
+            .ok_or(anyhow::format_err!("missing clock value of stage {stage}"))?;
+        let next_clock = clocks.get(next_stage).ok_or(anyhow::format_err!(
+            "missing clock value of stage {next_stage}"
+        ))?;
+        anyhow::ensure!(matches!(
+            next_clock.partial_cmp(clock),
+            Some(Ordering::Greater)
+        ));
+        // we only need to verify the last clock value, and we also can only verify the last clock
+        // value: we don't have the necessary immediate results to verify the other clocks
+        // just verify the last clock value is enough to ensure correct `task_result.output`, as
+        // already discussed in comments of `ClockClientContext`
+        // notice that although we have checked whether the other clocks happen before the clocks of
+        // successive stages, this is not enough for asserting those are the clocks that eventually
+        // lead to the last clock value i.e. producing the last clock value has made use of all/any
+        // of them (really? cannot say for sure), because we don't even know whether those clocks
+        // are verifiable or not. so including those clock are kind of pointless under current setup
+        if next_stage == output_stage {
+            context.verify(next_clock, output)?
+        }
+    }
+    Ok(())
+}
+
+impl<C: PartialOrd, I> TaskStage<C, I> {
+    pub fn verify(
+        &self,
+        task: &Workflow,
+        context: &impl ClockClientContext<Clock = C, Output = I>,
+    ) -> anyhow::Result<()> {
+        match &self.source {
+            StageSource::Start => Ok(()),
+            StageSource::Name(last_stage) => {
+                verify(&self.clocks, last_stage, &self.input, task, context)
+            }
+        }
+    }
+}
+
+impl<C: PartialOrd, O> TaskResult<C, O> {
+    pub fn verify(
+        &self,
+        task: &Workflow,
+        context: &impl ClockClientContext<Clock = C, Output = O>,
+    ) -> anyhow::Result<()> {
+        match task.stages.last() {
+            None => Ok(()),
+            Some(last_stage) => verify(&self.clocks, last_stage, &self.output, task, context),
+        }
+    }
 }
