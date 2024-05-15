@@ -1,6 +1,7 @@
 use std::{cmp::Ordering, collections::HashMap};
 
-use serde::Deserialize;
+use derive_more::{Deref, DerefMut};
+use serde::{Deserialize, Serialize};
 
 pub trait ClockClientContext {
     // clock value type, which usually consist a "causality part" for comparing and ordering and a
@@ -63,12 +64,16 @@ pub trait ClockContext: ClockClientContext {
     ) -> anyhow::Result<Self::Clock>;
 }
 
+// id of the computation nodes
+// in this prototype clients and the centralized "communication hub" have no id
 pub type NodeId = u32;
+
+pub type TaskId = u32;
 
 // the untrusted reference clock that lacks the "proof part"
 // not suitable for directly used, but can be composed as the "causality part"
 // i.e. the be delegated for implementing `PartialOrd`
-#[derive(Debug, Default, derive_more::Deref, derive_more::DerefMut)]
+#[derive(Debug, Clone, Default, Deref, DerefMut, Serialize, Deserialize)]
 pub struct OrdinaryClock(pub HashMap<NodeId, u32>);
 
 impl OrdinaryClock {
@@ -158,4 +163,17 @@ impl ClockContext for OrdinaryContext {
 #[derive(Debug, Deserialize)]
 pub struct Workflow {
     pub stages: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskStage<C, I> {
+    pub name: String, // of stage
+    pub input: I,     // of stage
+    pub clocks: HashMap<String, C>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskResult<C, O> {
+    pub output: O,
+    pub clocks: HashMap<String, C>,
 }
