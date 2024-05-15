@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+from sys import stdin, stdout
+from hashlib import sha256
+
+m = stdin.buffer.read()
+for _ in range(100):
+    m = sha256(m).digest()
+stdout.buffer.write(m)

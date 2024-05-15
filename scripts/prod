@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+from sys import stdin, stdout
+from math import prod
+
+result = prod(b + 1 for b in stdin.buffer.read()) % (2 ** 31 - 1)
+stdout.buffer.write(str(result).encode())
