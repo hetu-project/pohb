@@ -9,6 +9,7 @@ use tracing::info;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
     let input = b"hello"; //
     let task_id = rand::random();
 
@@ -20,6 +21,7 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("unimplemented")
     };
 
+    info!("publish task {task_id:08x}");
     let task_stage = TaskStage::<OrdinaryClock, _> {
         id: task_id,
         source: StageSource::Start,
