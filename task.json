@@ -1,5 +1,7 @@
-[
-    "rand",
-    "prod",
-    "hash"
-]
+{
+    "stages": [
+        "rand",
+        "prod",
+        "hash"
+    ]
+}

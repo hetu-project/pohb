@@ -1,7 +1,9 @@
 use std::{env::args, fs::canonicalize, process::Stdio};
 
 use bytes::Bytes;
-use pohb::{ClockContext, OrdinaryClock, OrdinaryContext, StageSource, TaskStage, Workflow};
+use pohb::{
+    ClockContext, OrdinaryClock, OrdinaryContext, StageSource, TaskResult, TaskStage, Workflow,
+};
 use reqwest::Client;
 use reqwest_eventsource::{Event, EventSource};
 use tokio::{fs, io::AsyncWriteExt as _, process::Command};
@@ -10,6 +12,7 @@ use tracing::{info, warn};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
     let task = args()
         .nth(1)
         .ok_or(anyhow::format_err!("missing task description"))?;
@@ -27,6 +30,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(StageSource::Start);
 
     let id = rand::random();
+    info!("start with id {id:08x}");
     let context = OrdinaryContext::<Bytes, _>::new(id);
     let mut event_source = EventSource::get("http://localhost:3000/gossip");
     while let Some(event) = event_source.next().await {
@@ -73,18 +77,32 @@ async fn main() -> anyhow::Result<()> {
                 &output,
             )?,
         );
-        let task_stage = TaskStage {
-            id: message.id,
-            source: StageSource::Name(stage.clone()),
-            input: output,
-            clocks,
-        };
-        Client::new()
-            .post("http://localhost:3000/gossip/publish")
-            .json(&task_stage)
-            .send()
-            .await?
-            .error_for_status()?;
+        if Some(&stage) == task.stages.last() {
+            let task_result = TaskResult {
+                id: message.id,
+                output,
+                clocks,
+            };
+            Client::new()
+                .post("http://localhost:3000/chain/propose")
+                .json(&task_result)
+                .send()
+                .await?
+                .error_for_status()?;
+        } else {
+            let task_stage = TaskStage {
+                id: message.id,
+                source: StageSource::Name(stage.clone()),
+                input: output,
+                clocks,
+            };
+            Client::new()
+                .post("http://localhost:3000/gossip/publish")
+                .json(&task_stage)
+                .send()
+                .await?
+                .error_for_status()?;
+        }
     }
 
     Ok(())
