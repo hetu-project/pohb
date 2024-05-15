@@ -1,4 +1,6 @@
-use std::collections::HashMap;
+use std::{cmp::Ordering, collections::HashMap};
+
+use serde::Deserialize;
 
 pub trait ClockClientContext {
     // clock value type, which usually consist a "causality part" for comparing and ordering and a
@@ -63,5 +65,97 @@ pub trait ClockContext: ClockClientContext {
 
 pub type NodeId = u32;
 
-#[derive(Debug)]
+// the untrusted reference clock that lacks the "proof part"
+// not suitable for directly used, but can be composed as the "causality part"
+// i.e. the be delegated for implementing `PartialOrd`
+#[derive(Debug, Default, derive_more::Deref, derive_more::DerefMut)]
 pub struct OrdinaryClock(pub HashMap<NodeId, u32>);
+
+impl OrdinaryClock {
+    pub fn new_genesis() -> Self {
+        Self::default()
+    }
+
+    pub fn new<'a>(deps: impl Iterator<Item = &'a Self>, id: NodeId) -> Self {
+        let mut value = HashMap::new();
+        for dep in deps {
+            for (other_id, seq) in &**dep {
+                let the_seq = value.entry(*other_id).or_default();
+                *the_seq = u32::max(*the_seq, *seq) + (*other_id == id) as u32
+            }
+        }
+        Self(value)
+    }
+
+    pub fn is_genesis(&self) -> bool {
+        self.values().all(|seq| *seq == 0)
+    }
+}
+
+impl PartialOrd for OrdinaryClock {
+    fn ge(&self, other: &Self) -> bool {
+        other.iter().all(|(other_id, other_seq)| {
+            self.get(other_id).copied().unwrap_or_default() >= *other_seq
+        })
+    }
+
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self.ge(other), other.ge(self)) {
+            (true, true) => Some(Ordering::Equal),
+            (true, false) => Some(Ordering::Greater),
+            (false, true) => Some(Ordering::Less),
+            (false, false) => None,
+        }
+    }
+}
+
+impl PartialEq for OrdinaryClock {
+    fn eq(&self, other: &Self) -> bool {
+        matches!(self.partial_cmp(other), Some(Ordering::Equal))
+    }
+}
+
+#[derive(Debug)]
+pub struct OrdinaryClientContext;
+
+impl ClockClientContext for OrdinaryClientContext {
+    type Clock = OrdinaryClock;
+    type Output = ();
+
+    fn verify(&self, _: &Self::Clock, &(): &Self::Output) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct OrdinaryContext(pub NodeId);
+
+impl ClockClientContext for OrdinaryContext {
+    type Clock = OrdinaryClock;
+    type Output = ();
+
+    fn verify(&self, _: &Self::Clock, &(): &Self::Output) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+impl ClockContext for OrdinaryContext {
+    type Input = ();
+
+    fn prove(
+        &self,
+        predecessors: &[(Self::Clock, Self::Input)],
+        (): &Self::Output,
+    ) -> anyhow::Result<Self::Clock> {
+        Ok(OrdinaryClock::new(
+            predecessors.iter().map(|(clock, _)| clock),
+            self.0,
+        ))
+    }
+}
+
+// TODO extend into a DAG (or even general graph) representation
+#[derive(Debug, Deserialize)]
+pub struct Workflow {
+    pub stages: Vec<String>,
+}
